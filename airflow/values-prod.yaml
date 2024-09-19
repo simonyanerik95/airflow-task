@@ -1,0 +1,126 @@
+executor: "KubernetesExecutor"
+allowPodLaunching: true
+createUserJob:
+  useHelmHooks: false
+  applyCustomEnv: false
+
+migrateDatabaseJob:
+# In case you need to disable the helm hooks that create the jobs after install.
+# Disable this if you are using ArgoCD for example
+  useHelmHooks: true
+  applyCustomEnv: true
+  enabled: true
+  ttlSecondsAfterFinished: 300
+
+#enable ingress if desired
+ingress:
+  enabled: true
+  web:
+    enabled: true
+    ingressClassName: "nginx"
+    annotations:
+      kubernetes.io/ingress.class: "nginx"
+      nginx.ingress.kubernetes.io/rewrite-target: /
+      cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    hosts:
+      - name: "airflow.opsfleet.com"  # Replace with your desired hostname
+        tls:
+          enabled: true
+          secretName: "airflow-opsfleet-tls-secret"  # Replace with your TLS secret name
+    path: "/"
+    pathType: "Prefix"
+
+postgresql:
+  enabled: false #better to have external db for production environment
+
+# Flask secret key for Airflow Webserver: `[webserver] secret_key` in airflow.cfg
+# You should set a static webserver secret key when deploying with this chart as it
+# will help ensure your Airflow components only restart when necessary.
+webserverSecretKeySecretName: opsfleet-airflow-webserver-secret
+
+data:
+  # If secret names are provided, use those secrets
+  # These secrets must be created manually, eg:
+  #
+  # kind: Secret
+  # apiVersion: v1
+  # metadata:
+  #   name: custom-airflow-metadata-secret
+  # type: Opaque
+  # data:
+  #   connection: base64_encoded_connection_string
+  metadataSecretName: opsfleet-db-secret #use the secret which contains external db connection string
+
+#use this for default user. the password can be changed after in Airflow console.
+defaultUser:
+    enabled: true
+    role: Admin
+    username: admin
+    email: admin@example.com
+    firstName: admin
+    lastName: user
+    password: admin
+
+dags: 
+  gitSync:
+    enabled: true
+    repo: git@github.com:opsfleet/airflow-dags.git
+    branch: main
+    rev: HEAD
+    ref: main
+    depth: 1
+    subPath: ""
+    knownHosts: |
+      github.com ssh-rsa ###public-ssh-key### 
+    period: 60s # the period of sync operations for storing new DAGs
+    sshKeySecret: opsfleet-ssh-secret #you should have private ssh key kept as a secret in your eks cluster
+  
+# pod configuration for the airflow pods to not run as a root user
+# When using KubernetesExecutor, workers.safeToEvict should be
+# set to false to avoid them being removed before finishing.
+workers:
+  safeToEvict: false
+  securityContexts:
+    pod:
+      runAsUser: 50000
+      fsGroup: 0
+    containers:
+      runAsUser: 50000
+      allowPrivilegeEscalation: false
+
+scheduler:
+  safeToEvict: true
+  securityContexts:
+    pod:
+      runAsUser: 50000
+      fsGroup: 0
+    containers:
+      runAsUser: 50000
+      allowPrivilegeEscalation: false
+
+webserver:
+  securityContexts:
+    pod:
+      runAsUser: 50000
+      fsGroup: 0
+    containers:
+      runAsUser: 50000
+      allowPrivilegeEscalation: false
+
+pgbouncer:
+# If you are using PostgreSQL as your database, you will likely
+# want to enable PgBouncer as well. Airflow can open a lot of
+# database connections due to its distributed nature and using a connection
+# pooler can significantly reduce the number of open connections on the database.
+  enabled: true
+# Depending on the size of your Airflow instance, you may want to
+# adjust the following as well:  
+  maxClientConn: 100
+  metadataPoolSize: 10
+  resultBackendPoolSize: 5
+
+
+logs:
+  persistence:
+    enabled: true  # Enable persistent volume for storing logs
+    existingClaim: opsfleet-airflow-logs-pvc"  # Use the name of your existing PVC
